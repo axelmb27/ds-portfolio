@@ -17,3 +17,9 @@ modeling and cosmic-ray data analysis (HAWC experiment). I like problems where I
 - Comfortable with the data-quality reasoning that separates *rare* from *wrong*.
 
 📫 [www.linkedin.com/in/axel-morales-4a2130265] · [axelmoralesb27@gmail.com]
+
+## Coursework
+
+Not original projects -  guided labs I completed as part of IBM Data Science Certification:
+
+[**spacex-ibm-capstone**](./spacex-ibm-capstone) - Capstone of the IBM Data Science Professional Certificate: predict Falcon 9 first-stage landing. Covers API data collection, web scraping, SQL and visual EDA, a Folium map, a Plotly Dash dashboard, and classification. IBM authored the labs; I completed the exercises.
