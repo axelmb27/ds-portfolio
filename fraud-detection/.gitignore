@@ -1,0 +1,21 @@
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# Python y Entornos
+__pycache__/
+*.py[cod]
+.env
+.venv
+env/
+venv/
+
+# Archivos de datos
+*.csv
+*.dat
+*.sqlite
+*.db
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
