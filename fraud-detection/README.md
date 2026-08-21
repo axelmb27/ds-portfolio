@@ -2,7 +2,7 @@
 
 **Business question:** How can we accurately identify fraudulent mobile-money transactions in a large dataset (6 million records), minimizing financial losses?
 
-Built on ~6.36 million simulated mobile-money transactions (PaySim1, Kaggle). The emphasis here is **identifying behavioral patterns through SQL-based exploratory data analysis (EDA)** and **preventing target leakage** to build a robust, production-ready machine learning model. The full pipeline involved: `SQL EDA` -> `Python EDA` -> `PostgreSQL Connection` -> `Model Training & Evaluation`.
+Built on ~6.36 million simulated mobile-money transactions (PaySim1, Kaggle). The emphasis here is **identifying behavioral patterns through SQL-based exploratory data analysis (EDA)** and **preventing target leakage** to build a robust machine learning model. The full pipeline involved: `SQL EDA` -> `Python EDA` -> `PostgreSQL Connection` -> `Model Training & Evaluation`.
 
 ---
 ## Data Dictionary
@@ -27,7 +27,7 @@ Built on ~6.36 million simulated mobile-money transactions (PaySim1, Kaggle). Th
 
 ## The Headline for the Business
 
-**The trained model successfully captures ~80% of potentially lost-to-fraud money.** With a ROC-AUC of 0.8451 and a PR-AUC of 0.5425 on highly imbalanced data, the model efficiently separates fraudulent actions from legitimate volume. This can be increassed depending on the business ability of dealing with false positives (transactions incorrectly flagged as fraud).
+**The trained model successfully captures ~80% of potentially lost-to-fraud money while catching only 53% of fraud events — by prioritizing high-value fraud (money, not event count)** With a ROC-AUC of 0.8451 and a PR-AUC of 0.5425 on highly imbalanced data, the model efficiently separates fraudulent actions from legitimate volume. This can be increased depending on the business ability of dealing with false positives (transactions incorrectly flagged as fraud).
 
 ---
 
@@ -80,7 +80,7 @@ Based on the EDA, the final feature set was intentionally kept small, robust, an
 - `is_night` (flag for hours 2-6)
 
 ### Model Training Strategy
-Because the dataset is heavily imbalanced (fraud represents < 0.2% of transactions), standard accuracy is misleading. The model was trained and evaluating **PR-AUC (Precision-Recall Area Under Curve)** over ROC-AUC, as PR-AUC is more sensitive to improvements in the minority (fraud) class. 
+Because the dataset is heavily imbalanced (fraud represents < 0.2% of transactions), standard accuracy is misleading. The model was trained and evaluated using **PR-AUC (Precision-Recall Area Under Curve)** over ROC-AUC, as PR-AUC is more sensitive to improvements in the minority (fraud) class. 
 
 ### Threshold Tuning & Business Impact
 A standard machine learning classification threshold (0.5) is rarely optimal for real-world fraud detection. By evaluating the model's probabilities, we can adjust the decision threshold to align with the business's risk tolerance:
@@ -92,10 +92,10 @@ A standard machine learning classification threshold (0.5) is rarely optimal for
 
 *(Below, you can see how adjusting the threshold impacts the raw number of caught fraud vs. false alerts for the two ML models evaluated: RF vs XGBoost)*
 
-![Confusion Matrix comparisson - Threshold](figures/05_confusion_matrix_comp.png)
+![Confusion Matrix comparison - Threshold](figures/05_confusion_matrix_comp.png)
 
 **Performance Highlights:**
-**Business Favored Model recomendation: Random Forest with 0.3-0.1 threshold**
+**Business Favored Model recommendation: Random Forest with 0.3-0.1 threshold**
 - **ROC-AUC:** 0.8451
 - **PR-AUC:** 0.5425
 - **Money saved:** 80%-84.3%
@@ -117,3 +117,33 @@ fraud-detection/
 ## Requirements
 - Python 3.8+
 - pandas, numpy, scikit-learn, xgboost, matplotlib, seaborn, psycopg2
+
+---
+
+# Part 2 — Stakeholder Dashboard (Power BI)
+
+Part 1 proves the model works. Part 2 answers a different question: **can a non-technical fraud-risk stakeholder see the value and act on it?** This layer translates the model output into an operating decision, built on four pre-aggregated tables exported from the notebook — no row-level data, no leakage columns.
+
+> The `.pbix` is included. The screenshots below are the deliverable.
+
+## Page 1 — Monitoring: impact → where → when
+
+![Dashboard Page 1](powerbi/screenshots/page1.png)
+
+The header asserts a single operating point (Random Forest @ threshold 0.30): **$3.64B at stake → 80% of the money recovered, catching only 53% of fraud *events*, while flagging just 0.28% of clients.** The model is optimized for money, not event count — it prioritizes the expensive frauds. The lower visuals justify the modeling scope (fraud lives only in TRANSFER and CASH_OUT) and the `is_night` feature (fraud rate spikes overnight while volume collapses).
+
+## Page 2 — Decision analysis: which model, which threshold
+
+![Dashboard Page 2](powerbi/screenshots/page2.png)
+
+**Trade-off curve (right):** money saved vs. % of clients flagged, one line per model. The x-axis is **operational cost (flagged %), not the raw threshold** — the only honest way to compare RF and XGBoost, whose probability scales differ (XGBoost uses another scale, so an identical threshold means different things per model). Compared at equal cost, **RF dominates across the entire realistic operating region (≤2% flagged).** The curve is cropped to that region on purpose: XGBoost only "wins" further right by flagging 5–8% of clients — a cost no antifraud team pays (Remember the total number of test set transactions is on the hundreds of thousands). Threshold labels (0.5 / 0.3 / 0.04) make the operating point explicit.
+
+**Gains curve (left):** if the review team can only inspect a fraction of transactions, ranking by model score and reviewing the top ~2% captures ~70% of fraud *events*. The "Random (no model)" diagonal is the baseline — the gap above it is the model's lift.
+
+## What these two charts show *together* (the core insight)
+
+The gains curve shows **XGBoost catching slightly more fraud events** in the top 2%; the trade-off curve shows **RF saving more money** at equal cost. XGBoost catches more *cases*; RF catches more *dollars*, because it ranks high-value frauds higher. **This result is the reason this project optimizes for money saved rather than event-count recall, a real business decision.** A model tuned to maximize caught-fraud *count* would recommend XGBoost and increase operational cost by flagging ~10^4 legitimate transactions for review.
+
+## On the tool
+
+For a static, single-analyst portfolio, Power BI is included to demonstrate the communication layer: turning a defensible model into an operating recommendation a risk stakeholder can act on.

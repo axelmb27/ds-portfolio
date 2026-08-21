@@ -7,8 +7,9 @@ modeling and cosmic-ray data analysis (HAWC experiment). I like problems where I
 
 | Project | Problem | Stack | Highlight |
 |---|---|---|---|
-| [**credit-default**](./credit-default) | Predict loan default and turn it into a review-budget decision | pandas · scikit-learn · XGBoost | Found that a generic outlier-removal approach would delete the strongest signal; reviewing the riskiest 10% captures ~55% of defaulters |
-| [**fraud-detection**](./fraud-detection) | Predict fraud transactions from 1 month dataset, minimize losses | SQL · scikit-learn · Random Forest | Saved ~80% of previously lost money to fraud in a dataset of 6 million transactions |
+| [**fraud-detection**](./fraud-detection) | Predict fraud transactions from 1 month dataset, minimize losses | SQL · scikit-learn · Random Forest · Power BI | SRecovered ~80% of defrauded money while catching only 53% of fraud events — by prioritizing high-value fraud (money, not event count) |
+| [**credit-default**](./credit-default) | Predict loan default and turn it into a review-budget decision | pandas · scikit-learn · XGBoost | Captured ~55% of defaulters by reviewing only the riskiest 10%  |
+
 
 *More projects in progress.*
 
