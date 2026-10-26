@@ -1,8 +1,12 @@
-# Transactional Fraud Detection
+# Transactional Fraud Detection — from SQL EDA to a live API on AWS
+
+![AWS Lambda](https://img.shields.io/badge/AWS_Lambda-serverless_API-FF9900?logo=awslambda&logoColor=white) ![Docker](https://img.shields.io/badge/Docker-container-2496ED?logo=docker&logoColor=white) ![Amazon ECR](https://img.shields.io/badge/Amazon_ECR-image_registry-FF9900?logo=amazonaws&logoColor=white) ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+
+> **Deployed:** the model runs as a **containerized, serverless REST API on AWS**: a Docker image in **Amazon ECR**, served by **AWS Lambda** behind a private, **IAM-authenticated** HTTPS endpoint, with logs and latency in **CloudWatch** and no long-lived access keys anywhere. ~7 ms warm inference, $0 operating cost. → [Part 3](#part-3--deployment-on-aws-the-model-as-a-live-api)
 
 **Business question:** How can we accurately identify fraudulent mobile-money transactions in a large dataset (6 million records), minimizing financial losses?
 
-Built on ~6.36 million simulated mobile-money transactions (PaySim1, Kaggle). The emphasis here is **identifying behavioral patterns through SQL-based exploratory data analysis (EDA)** and **preventing target leakage** to build a robust machine learning model. The full pipeline involved: `SQL EDA` -> `Python EDA` -> `PostgreSQL Connection` -> `Model Training & Evaluation`.
+Built on ~6.36 million simulated mobile-money transactions (PaySim1, Kaggle). The emphasis here is **identifying behavioral patterns through SQL-based exploratory data analysis (EDA)** and **preventing target leakage** to build a robust machine learning model. The full pipeline: `SQL EDA` -> `Python EDA` -> `PostgreSQL Connection` -> `Model Training & Evaluation` -> `Stakeholder Dashboard (Power BI)` -> `Containerized API on AWS Lambda`.
 
 ---
 ## Data Dictionary
@@ -106,17 +110,28 @@ A standard machine learning classification threshold (0.5) is rarely optimal for
 ```
 fraud-detection/
 ├── README.md
-├── .gitignore
 ├── fraud_detection_eda_and_fe.sql  # PostgreSQL EDA and Feature Engineering
 ├── Fraud_detection.ipynb           # Python EDA, DB connection, Modeling
-└── figures/                        
+├── figures/
+├── powerbi/                        # Part 2: dashboard (.pbix + screenshots)
+└── deploy/                         # Part 3: the model as a serverless API on AWS
+    ├── features.py                 # one feature definition, shared by training and serving
+    ├── train.py                    # trains and saves the scikit-learn Pipeline
+    ├── predict.py                  # input validation + scoring contract
+    ├── app.py                      # AWS Lambda handler
+    ├── test_predict.py             # pytest contract tests
+    ├── Dockerfile                  # AWS Lambda Python 3.12 base image
+    ├── requirements.txt            # serving dependencies (pinned)
+    ├── requirements-dev.txt        # + training and testing
+    ├── model/fraud_xgb.joblib      # trained Pipeline (180 KB)
+    └── screenshots/
 ```
 
 **Data:** Not committed due to size limits. Download from the [Kaggle competition](https://www.kaggle.com/datasets/ealaxi/paysim1) or via `kagglehub`. Cite: E. A. Lopez-Rojas , A. Elmir, and S. Axelsson. "PaySim: A financial mobile money simulator for fraud detection". In: The 28th European Modeling and Simulation Symposium-EMSS, Larnaca, Cyprus. 2016
 
 ## Requirements
-- Python 3.8+
-- pandas, numpy, scikit-learn, xgboost, matplotlib, seaborn, psycopg2
+- Analysis (Part 1): Python 3.8+, pandas, numpy, scikit-learn, xgboost, matplotlib, seaborn, psycopg2
+- Deployment (Part 3): Python 3.12, Docker, AWS CLI v2; pinned versions in `deploy/requirements.txt`
 
 ---
 
@@ -147,3 +162,112 @@ The gains curve shows **XGBoost catching slightly more fraud events** in the top
 ## On the tool
 
 For a static, single-analyst portfolio, Power BI is included to demonstrate the communication layer: turning a defensible model into an operating recommendation a risk stakeholder can act on.
+
+---
+
+# Part 3 — Deployment on AWS: the model as a live API
+
+Part 1 proves the model works; Part 2 makes it actionable for a stakeholder. Part 3 answers the engineering question: **can another system call it in real time, securely and at zero cost?** The trained scikit-learn Pipeline is packaged in a Docker image and served by AWS Lambda behind a private HTTPS endpoint.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Local["Local"]
+        T[train.py] --> J[(fraud_xgb.joblib<br/>Pipeline · 180 KB)]
+        J --> D[docker build<br/>+ local test with Lambda RIE]
+    end
+    D -->|docker push| ECR[(Amazon ECR<br/>fraud-api:v1)]
+    ECR --> L[AWS Lambda<br/>container · Python 3.12<br/>1 GB · 30 s]
+    C[Client with<br/>IAM credentials] -->|HTTPS POST JSON<br/>SigV4-signed| U[Function URL<br/>auth: AWS_IAM] --> L
+    L -->|score as JSON| C
+    L -.->|logs · duration · memory| CW[CloudWatch]
+```
+
+## Call it
+
+The endpoint only accepts requests signed with IAM credentials of the account (SigV4); anything else gets `403`.
+
+```bash
+eval "$(aws configure export-credentials --format env)"   # short-lived credentials from `aws login`
+curl -X POST "$FRAUD_API_URL" \
+  --aws-sigv4 "aws:amz:us-east-1:lambda" \
+  --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+  -H "x-amz-security-token: $AWS_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"step": 26, "type": "TRANSFER", "amount": 500000.0}'
+# 200 -> {"fraud_score": 0.9787, "is_fraud": true}
+```
+
+| | |
+|---|---|
+| **Input** | `step` (simulation hour), `type` (`TRANSFER` or `CASH_OUT`), `amount` (≥ 0) |
+| **Output** | `fraud_score` (probability, 0–1) and `is_fraud` (`fraud_score ≥ 0.9`) |
+| **Errors** | `400` with a message for an unsupported `type`, a missing field, a negative amount or invalid JSON; `403` for unsigned or unauthorized requests |
+
+## Design decisions
+
+| Decision | Why |
+|---|---|
+| Features computed inside the Pipeline (`FunctionTransformer(add_features)`), from one `features.py` shared by training and serving | The API receives raw fields and computes features exactly as in training, so there is no training/serving skew. Verified: the same score (0.9787) on the laptop, in local Docker and on Lambda. |
+| XGBoost as the served model | Small artifact (180 KB) keeps the image lean and the cold start shorter. Trade-off: Part 1's Random Forest ranks better (PR-AUC 0.5425 vs 0.4283); swapping it in is a one-line change in `train.py`. |
+| Threshold 0.9 | On XGBoost's probability scale (see Part 2), it saves 83.8% of defrauded money while flagging 0.85% of transactions. |
+| Validate before scoring | The model only saw `TRANSFER` and `CASH_OUT`; anything else gets a `400` instead of a meaningless score. |
+| Model loaded once per container | Loaded at import (Lambda init) and reused by every warm request. |
+| Container image instead of a .zip | pandas + scikit-learn + XGBoost exceed Lambda's 250 MB unzipped .zip limit; container images can be up to 10 GB. |
+| Private endpoint (Function URL with `AWS_IAM` auth) | Only IAM identities of this account can call it; unsigned traffic is rejected with `403` before the function code runs, so the URL is useless to anyone else. |
+| Security | Root account locked behind MFA; daily work as an IAM user; the CLI uses `aws login` short-lived credentials (no access keys anywhere); the function's execution role can only write its own logs; ECR scans the image on push. |
+| Cost guardrails | AWS Free plan, a zero-spend budget and a cost anomaly monitor, single region (us-east-1). Reserved concurrency can't be set on a new account (limit 10, and AWS keeps ≥ 100 unreserved), so the account limit caps worst-case traffic. |
+
+## Results in production (CloudWatch)
+
+| Metric | Value |
+|---|---|
+| Warm inference (server side) | 7.3 ms (a rejected request: 1.6 ms) |
+| Warm round trip from Mexico (curl) | ~0.3 s, mostly network + TLS |
+| Cold start (first call after deploy) | ~32 s: loading the freshly pulled image exceeded Lambda's 10 s init limit, so Lambda retried the init inside the first request (21.7 s) |
+| Cold start (image already cached) | ~5 s end to end (init 4.3 s) |
+| Memory used | 255 MB of 1,024 MB |
+| Image | 880 MB local, 301 MB compressed in ECR |
+| Cost | $0 |
+
+![Lambda console](deploy/screenshots/01_lambda_console.png)
+
+![CloudWatch logs](deploy/screenshots/02_cloudwatch_logs.png)
+
+## Limitations & next steps
+
+- **`step` is an absolute hour of the simulation (1–743).** Live traffic would bring hours the model never saw; a production version should keep only cyclical time features (`hour_of_day`, `is_night`).
+- **Random train/test split.** Test rows come from the same weeks as training, so this is not an out-of-time evaluation; a temporal split is the next validation step.
+- **Cold start.** Slimmer image (e.g., drop pandas from serving) or more memory (Lambda allocates more CPU with more memory).
+- **Callers outside the account.** External clients would need a dedicated IAM role, or API Gateway with keys and throttling.
+- **No monitoring or retraining yet.** Next: replay the test set week by week through the API and track alert rate, precision and money caught in CloudWatch.
+- **Image vulnerabilities.** ECR's scan reports 19 HIGH findings, all in OS packages of the AWS base image (curl, openssl, rpm, …), none in the Python dependencies. Fix: rebuild on the latest base image.
+- **Infrastructure built by hand.** Next: AWS SAM (infrastructure as code) and GitHub Actions (CI/CD).
+
+<details>
+<summary><b>Reproduce it</b></summary>
+
+```bash
+cd deploy
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python train.py      # downloads PaySim via kagglehub, trains, saves model/fraud_xgb.joblib
+.venv/bin/pytest -v            # API contract tests
+
+# Run Lambda locally (the base image ships the Runtime Interface Emulator)
+docker build -t fraud-api .
+docker run --rm -p 9000:8080 fraud-api
+curl -X POST localhost:9000/2015-03-31/functions/function/invocations \
+  -d '{"body": "{\"step\": 26, \"type\": \"TRANSFER\", \"amount\": 500000.0}"}'
+
+# Push to Amazon ECR (ACCOUNT = your AWS account id)
+aws login
+aws ecr create-repository --repository-name fraud-api --image-scanning-configuration scanOnPush=true
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ACCOUNT.dkr.ecr.us-east-1.amazonaws.com
+docker tag fraud-api:latest ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/fraud-api:v1
+docker push ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/fraud-api:v1
+```
+
+Then, in the Lambda console: *Create function → Container image* (x86_64, 1,024 MB, 30 s timeout) → *Configuration → Function URL* (auth `AWS_IAM`).
+
+</details>

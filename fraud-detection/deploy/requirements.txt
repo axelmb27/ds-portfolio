@@ -1,0 +1,6 @@
+# Lo que necesita la API para predecir (va dentro de la imagen de Lambda)
+joblib==1.6.0
+numpy==2.5.4
+pandas==3.1.0
+scikit-learn==1.9.1
+xgboost-cpu==3.4.1

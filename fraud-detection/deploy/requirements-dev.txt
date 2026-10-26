@@ -1,0 +1,4 @@
+# Para entrenar y probar en local (NO va en la imagen)
+-r requirements.txt
+kagglehub==1.0.3
+pytest==9.1.1
